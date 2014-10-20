@@ -1,0 +1,950 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8"/>
+	<title>EaselJS Example: Animation sequences & sprite sheets</title>
+
+	<!-- We also provide hosted minified versions of all CreateJS libraries.
+	   http://code.createjs.com -->
+	<script type="text/javascript" src="http://code.createjs.com/createjs-2013.12.12.min.js"></script>
+
+	<script>
+		var canvas;
+		var stage;
+
+		var img = new Image();
+		var tileImgIndividual = new Image();
+		var spriteList;
+
+		var loadedImage = 0;
+		var imageToLoad = 0;
+
+		var metaTiles = [];
+		var metaTilesPlaced = [];
+
+		var activeCols = 10;
+		var activeRows = 10;
+
+		var squareSide = 32;  //placement tiles are 64 px, consist of four individual tiles
+		var squarePadding = 0;
+
+		var nextPointerIdx = 1;
+
+		var colorStatesTotal = 9;
+
+		var nextPointerSprite;
+
+		var suggestionSprites = [];
+		var totalSuggestionSprites = 6;
+		var placedSuggestions = 0;
+
+		var consecutiveFailuresFindingPlacement = 0;
+
+		var doAutoPlacementTest = false;
+
+		var tilesheetStats = [];
+
+		var clearingGroup = [];
+
+		var buttonRotate;
+		var buttonRotateImage;
+
+		var pointerConfiguration;
+
+		var pointer_i = 0;
+		var pointer_p = 0;
+
+		var pointer_rotation = 0;
+
+		var displayInTransition = false;
+
+		var tilesInTransition = 0;
+
+		var adjacencyMatchRequirement = 4;
+
+
+		var tileSheetColumns = 10;
+		var tileSheetRows = 1;
+
+		var emptySpriteIdx = 0;
+
+		var directionCodes = ["N", "S", "E", "W"];
+
+		var bitShift_N = 0x01;
+		var bitShift_S = 0x08;
+		var bitShift_E = 0x02;
+		var bitShift_W = 0x04;
+
+		// 5  01  3
+		//04      02
+		//12  08  10
+
+		var powerBitsByDirection = [0x01, 0x08, 0x02, 0x04];
+
+		//default rotation tileset looks like
+		//[ 0 0   O O   O O   G O   B B   B B   O B   G G   G G   B G ]
+		//[ 0 0   O G   G G   G G   B O   O O   O O   G B   B B   B B ]
+
+		//edge string describes the blocks' edge reading clockwise
+
+		var defaultRotationEdge_N = ["00", "OO", "OO", "GO", "BB", "BB", "OB", "GG", "GG", "BG"];
+		var defaultRotationEdge_S = ["00", "GO", "GG", "GG", "OB", "OO", "OO", "BG", "BB", "BB"];
+		var defaultRotationEdge_E = ["00", "OG", "OG", "OG", "BO", "BO", "BO", "GB", "GB", "GB"];
+		var defaultRotationEdge_W = ["00", "OO", "GO", "GG", "BB", "OB", "OO", "GG", "BG", "BB"];
+
+
+		var edgeConfigByDirection = [defaultRotationEdge_N, defaultRotationEdge_S, defaultRotationEdge_E, defaultRotationEdge_W];
+		
+		var individualColorTiles = ["0", "O", "G", "B"]; //spritesheet of individual tiles
+
+		var numMatchesCleared = 0;  //best score 131 (14 x 14),  81 (10 x 10)
+
+		var numTilesCleared = 0; //points for each tile, so that x6 and x8 give more points than x4
+									//best score 72 (10 x 10)
+		
+
+		function init() {
+			//find canvas and load images, wait for last image to load
+			canvas = document.getElementById("testCanvas");
+
+			// create a new stage and point it at our canvas:
+			stage = new createjs.Stage(canvas);
+
+			img = new Image();
+			img.src = "tiles4blocks3colors.png";
+			img.onload = handleImageLoad;
+
+			//buttonRotateImage = new createjs.Bitmap("button_rotate90.png");
+
+			tileImgIndividual = new Image();
+			tileImgIndividual.src = "tiles3colorsIndividual_32px.png"
+			tileImgIndividual.onload = handleImageLoad;
+
+
+			loadedImage = 0;
+			imagesToLoad = 2;
+
+		}
+
+		function handleImageLoad(event) 
+		{
+			//err("trace", "onLoadImage");
+			loadedImage++;
+			if (loadedImage >= imagesToLoad){
+				setup();
+			}
+
+		}
+
+		function setup() 
+		{
+			// grab canvas width and height for later calculations:
+			var w = canvas.width;
+			var h = canvas.height;
+
+			// create spritesheet and assign the associated data.
+			var spriteSheet = new createjs.SpriteSheet({
+														   images: [img],
+														   frames: {width: 64, height: 64, regX: 0, regY: 0},
+														   animations: {
+															   allStates: [0, 10, "allStates"]
+														   }
+													   });
+
+			var spriteSheetIndividual = new createjs.SpriteSheet({
+															images: [tileImgIndividual],
+															frames: {width:32, height:32, regX:0, regY:0},
+															animations: {
+																allStates: [0, 4, "allStates"]
+															}
+														});
+
+			// create a Sprite instance to display and play back the sprite sheet:
+			var spritePointer = new createjs.Sprite(spriteSheet);
+			var spriteTile = new createjs.Sprite(spriteSheetIndividual);
+
+			// start playing the first sequence:
+			//sprite.gotoAndPlay("playAllStates");		//animate
+
+
+			var numberOfTiles = activeRows * activeCols;
+			
+			var sprite = spriteTile.clone();
+
+			spriteList = [];
+			var i;
+			var ii;
+			var pp;
+			for (pp=0; pp<activeRows; pp++){
+				for (ii=0; ii<activeCols; ii++){
+					var ip = (pp * activeCols) + ii;
+
+					sprite.name = "tile" + ip;
+					
+					sprite.regX = 0;
+					sprite.regY = 0;
+
+					sprite.x = ((squareSide+squarePadding) * ii) + 0;
+					sprite.y = ((squareSide+squarePadding) * pp) + 0;
+					//sprite.currentAnimationFrame = Math.random() * spriteSheet.getNumFrames("playAllStates");
+					sprite.currentAnimationFrame = emptySpriteIdx;
+					stage.addChild(sprite);
+					spriteList.push(sprite);
+					
+
+					//sprite.onPress = handleOnPress;
+					sprite.addEventListener("click", handleOnPress);
+					
+
+					sprite.ip = ip;
+
+					var mTile = new MetaTile(ii, pp, ip, sprite);
+					metaTiles.push(mTile);
+
+					if (ip < numberOfTiles - 1) { sprite = spriteTile.clone(); }
+
+				}
+			}
+
+			for(i=0;i<numberOfTiles;i++){
+				var tTile = metaTiles[i];
+				tTile.N = getMetaTileByIP(tTile._i, tTile._p - 1);
+				tTile.S = getMetaTileByIP(tTile._i, tTile._p + 1);
+				tTile.E = getMetaTileByIP(tTile._i + 1, tTile._p );
+				tTile.W = getMetaTileByIP(tTile._i - 1, tTile._p );
+			 }
+
+			 
+
+			 nextPointerSprite = spritePointer.clone();
+			 nextPointerSprite.x = (squareSide+squarePadding) * activeCols;
+			 nextPointerSprite.x += 32;
+			 nextPointerSprite.y = 0;
+			 nextPointerSprite.regX = 32;
+			 nextPointerSprite.regY = 32;
+			 stage.addChild(nextPointerSprite);
+			 spriteList.push(nextPointerSprite);
+
+			 nextPointerIdx = 1;
+			 nextPointerSprite.currentAnimationFrame = nextPointerIdx;
+
+			 setPointerConfiguration(nextPointerIdx);
+
+			
+			 resetPointer();
+
+			 stage.update();
+
+			createjs.Ticker.addEventListener("tick", tick);
+
+			document.getElementById("score").textContent = 'score: ' + numMatchesCleared;
+
+			window.addEventListener('keydown', function(event){
+				event.preventDefault();
+				rotatePointer90Clockwise();
+			});
+		}
+
+		//called if there is an error loading the image (usually due to a 404)
+		function handleImageError(e) 
+		{
+			//console.log("Error Loading Image : " + e.target.src);
+		}
+
+		function handleOnPressRotate(event) 
+		{
+			rotatePointer90Clockwise();
+
+			//autoPlaceNext();
+
+			
+		}
+
+		function handleOnPress(event) 
+		{
+			var tile = event.target;
+			var mTile = metaTiles[tile.ip];
+
+			if (displayInTransition == true){
+				//disallow new input while transitioning
+
+			}else{
+				
+				if (mTile.validatePointerForPosition(pointerConfiguration)){
+
+					//place pointer at this tile position
+
+					imprintPointer(mTile._i, mTile._p, pointerConfiguration);
+
+					resetPointer();
+
+					//metaTilesPlaced.push(mTile);
+
+					updateAllTilesIdentity();
+
+				}else{
+					//incompatible placement
+
+				}
+				
+
+				
+			}
+			
+
+			
+		}
+
+		function updatePointerPos() 
+		{
+			//track mouse hover position to show potential tile placement
+			var tilePX = Math.floor(stage.mouseX / squareSide);
+			var tilePY = Math.floor(stage.mouseY / squareSide);
+
+			tilePX %= activeCols;
+			tilePY %= activeRows;
+
+			//tile pointer is registered upper left, so tile placement extends +1 column and row from tilePX and tilePY -
+			//		[PX,PY   ] 	[PX+1,PY  ]
+			//		[        ]  [         ]
+			//		[PX,PY+1 ]  [PX+1,PY+1]
+			//		[        ]	[         ]
+
+			if (tilePX != pointer_i || tilePY != pointer_p){
+
+				//new tile position
+
+				nextPointerSprite.x = (tilePX * squareSide) + 32;
+				nextPointerSprite.y = (tilePY * squareSide) + 32;
+
+				var mTileHere = getMetaTileByIP(tilePX, tilePY);
+
+				if (mTileHere.validatePointerForPosition(pointerConfiguration)){
+					//console.log("pointerValidated");
+
+					nextPointerSprite.alpha = 1;
+
+				}else{
+
+					//console.log("pointer NOT validated");
+
+					nextPointerSprite.alpha = 0.5;
+				}
+
+				stage.update();
+
+			}else{
+
+				//same tile position
+			}
+
+			
+			pointer_i = tilePX;
+			pointer_p = tilePY;
+
+
+			
+		}
+
+
+		function tick(event) 
+		{
+			
+			// update the stage:
+			//stage.update(event);
+
+			updatePointerPos();
+
+			
+			if (tilesInTransition > 0){
+				stage.update(event);
+			}
+		}
+
+		
+
+
+		function getMetaTileByIP(ii, pp)
+		{
+			if (ii < 0) return null;
+			if (ii >= activeCols) return null;
+			if (pp < 0) return null;
+			if (pp >= activeRows) return null;
+			
+			var ip = (pp * activeCols) + ii;
+			return metaTiles[ip];
+		}
+
+		function updateAllTilesIdentity()
+		{
+			var numberOfTiles = activeRows * activeCols;
+			for(i=0;i<numberOfTiles;i++){
+				var tTile = metaTiles[i];
+				tTile.displayAsset.gotoAndStop(tTile.identity);
+			 }
+			 stage.update();
+		}
+
+
+		function getStringForTileEdgeConfig(tileIdx, edgeFace)
+		{
+			//format String of two characters - 0 for nothing, G for Green, O for Orange and B for Blue
+			//edgeFace is String, "N", "S", etc
+
+			var dirIndex = directionCodes.indexOf(edgeFace);
+
+			var workingSet = edgeConfigByDirection[dirIndex];
+			
+
+			//var flipForEasyOppMatching = (edgeFace == "E" || edgeFace == "S") ? true : false;
+			var flipForEasyOppMatching = (edgeFace == "X") ? true : false;
+			//"X" is to keep it false
+
+			//when using this string for comparing between neighbors, an accurate match requires flipping one or the other ie 001 vs 100
+			//so we just flip it here and everything easier comparable unless tile rotates
+
+
+			//NO! breaks on rotation. keep flipped strings with pointer instead
+
+			var stringConfig = workingSet[tileIdx];
+		
+
+			return stringConfig;
+
+		}
+
+		
+
+		function resetPointer()
+		{
+			nextPointerIdx = getRandomGOTileIdx();
+			setPointerConfiguration(nextPointerIdx);
+			pointer_rotation = 0;
+			nextPointerSprite.rotation = pointer_rotation;
+			nextPointerSprite.gotoAndStop(nextPointerIdx);
+
+			var numRandRotations = Math.floor(Math.random() * 3);
+			for (var i = 0; i < numRandRotations; i++){
+				rotatePointer90Clockwise();
+			}
+
+			 
+
+		}
+
+		function setPointerConfiguration(pointerIdx)
+		{
+			
+			var peN = getStringForTileEdgeConfig(pointerIdx, "N");
+			var peS = getStringForTileEdgeConfig(pointerIdx, "S");
+			var peE = getStringForTileEdgeConfig(pointerIdx, "E");
+			var peW = getStringForTileEdgeConfig(pointerIdx, "W");
+
+			var opeN = reverseString(peN);
+			var opeS = reverseString(peS);
+			var opeE = reverseString(peE);
+			var opeW = reverseString(peW);
+
+			pointerConfiguration = {edge_N:peN, edge_S:peS, edge_E:peE, edge_W:peW, opp_N:opeN, opp_S:opeS, opp_E:opeE, opp_W:opeW};
+
+			//console.log("pointeredges- N = " + peN + " S = " + peS + " E = " + peE + " W = " + peW);
+			//console.log("oppositedges- N = " + opeN + " S = " + opeS + " E = " + opeE + " W = " + opeW);
+		}
+
+		function rotatePointer90Clockwise()
+		{
+			var peN = pointerConfiguration.edge_N;
+			var peS = pointerConfiguration.edge_S;
+			var peE = pointerConfiguration.edge_E;
+			var peW = pointerConfiguration.edge_W;
+
+			var opeN = pointerConfiguration.opp_N;
+			var opeS = pointerConfiguration.opp_S;
+			var opeE = pointerConfiguration.opp_E;
+			var opeW = pointerConfiguration.opp_W;
+
+			pointerConfiguration = {edge_N:peW, edge_S:peE, edge_E:peN, edge_W:peS, opp_N:opeW, opp_S:opeE, opp_E:opeN, opp_W:opeS};
+
+			pointer_rotation += 90;
+
+			nextPointerSprite.rotation = pointer_rotation;
+
+			stage.update();
+
+			//console.log("pointeredges, post Rotation - N = " + pointerConfiguration.edge_N + " S = " + pointerConfiguration.edge_S + " E = " + pointerConfiguration.edge_E + " W = " + pointerConfiguration.edge_W);
+		}
+
+		function validateEmptyTilesForPointer(i,p)
+		{
+			if (i >= (activeCols - 1)){
+				return false;
+			}
+			if (p >= (activeRows - 1)){
+				return false;
+			}
+			var mTilePointer = getMetaTileByIP(i,p);
+			if (mTilePointer.identity == emptySpriteIdx){
+				if (getMetaTileByIP(i+1,p).identity != emptySpriteIdx){
+					return false;
+				}
+				if (getMetaTileByIP(i,p+1).identity != emptySpriteIdx){
+					return false;
+				}
+				if (getMetaTileByIP(i+1,p+1).identity != emptySpriteIdx){
+					return false;
+				}
+				return true;
+			}
+			return false;
+		}
+
+		function imprintPointer(i, p, pointerObj)
+		{
+
+			var topLeftChar = pointerObj.edge_N.charAt(0);
+			var topRightChar = pointerObj.edge_E.charAt(0);
+			var bottomLeftChar = pointerObj.edge_W.charAt(0);
+			var bottomRightChar = pointerObj.edge_S.charAt(0);
+
+			var topLeft = getMetaTileByIP(i,p);
+			var topRight = getMetaTileByIP(i+1,p);
+			var bottomLeft = getMetaTileByIP(i,p+1);
+			var bottomRight = getMetaTileByIP(i+1,p+1);
+
+			topLeft.setIdentity(individualColorTiles.indexOf(topLeftChar));
+			topRight.setIdentity(individualColorTiles.indexOf(topRightChar));
+			bottomLeft.setIdentity(individualColorTiles.indexOf(bottomLeftChar));
+			bottomRight.setIdentity(individualColorTiles.indexOf(bottomRightChar));
+
+			//now check if clearable
+
+			scanForClearable();
+
+		}
+
+		function getPointerImprint(pointerObj)
+		{
+			//returns array of identities representing position/colors
+			//array is [topLeft, topRight, bottomLeft, bottomRight]
+			var topLeftChar = pointerObj.edge_N.charAt(0);
+			var topRightChar = pointerObj.edge_E.charAt(0);
+			var bottomLeftChar = pointerObj.edge_W.charAt(0);
+			var bottomRightChar = pointerObj.edge_S.charAt(0);
+
+			return [individualColorTiles.indexOf(topLeftChar), individualColorTiles.indexOf(topRightChar), individualColorTiles.indexOf(bottomLeftChar), individualColorTiles.indexOf(bottomRightChar)];
+
+		}
+
+		function scanForClearable()
+		{
+			var i;
+			var numberOfTiles = metaTiles.length;
+
+			clearingGroup = [];
+
+			for(i=0;i<numberOfTiles;i++){
+				var mTile = metaTiles[i];
+				var clearIdentity = mTile.identity;
+				if (clearIdentity != emptySpriteIdx){
+					if (mTile.checkSameEastSouth()){
+						var cornerTile = getMetaTileByIP(mTile._i + 1, mTile._p + 1);
+						if (cornerTile.identity == clearIdentity){
+							//weve got a set of four to clear
+							clearingGroup.push(mTile);
+							clearingGroup.push(mTile.E);
+							clearingGroup.push(mTile.S);
+							clearingGroup.push(cornerTile);
+
+							//mTile.setIdentity(emptySpriteIdx);
+							//mTile.E.setIdentity(emptySpriteIdx);
+							//mTile.S.setIdentity(emptySpriteIdx);
+							//cornerTile.setIdentity(emptySpriteIdx);
+
+							numMatchesCleared++;
+
+							//check to see if six clearable horizontal
+
+							var extraTile1 = getMetaTileByIP(mTile._i + 2, mTile._p);
+							var extraTile2 = getMetaTileByIP(mTile._i + 2, mTile._p + 1);
+
+							if (extraTile1 && extraTile2){
+								if (extraTile1.identity == clearIdentity){
+									if (extraTile2.identity == clearIdentity){
+										//can clear two more
+										//extraTile1.setIdentity(emptySpriteIdx);
+										//extraTile2.setIdentity(emptySpriteIdx);
+
+										clearingGroup.push(extraTile1);
+										clearingGroup.push(extraTile2);
+									}
+								}
+							}
+
+							//check to see if six clearable vertical
+
+							var extraTile3 = getMetaTileByIP(mTile._i, mTile._p + 2);
+							var extraTile4 = getMetaTileByIP(mTile._i + 1, mTile._p + 2);
+
+							if (extraTile3 && extraTile4){
+								if (extraTile3.identity == clearIdentity){
+									if (extraTile4.identity == clearIdentity){
+										//can clear two more
+										//extraTile3.setIdentity(emptySpriteIdx);
+										//extraTile4.setIdentity(emptySpriteIdx);
+
+										clearingGroup.push(extraTile3);
+										clearingGroup.push(extraTile4);
+									}
+								}
+							}
+							
+
+							//document.getElementById("score").textContent = 'score: ' + numMatchesCleared;
+
+						}
+					}
+				}
+			}
+
+			//stage.update();
+
+			var numToClear = clearingGroup.length;
+
+			if (numToClear > 0){
+				for (i=0; i<numToClear; i++){
+					tweenHighlightTile(clearingGroup[i]);
+				}
+
+				numTilesCleared += numToClear;
+				document.getElementById("score").textContent = 'score: ' + numTilesCleared;
+			}
+		}
+
+		
+
+		function MetaTile(i,p,ip, setAsset)
+		{
+			this._i = i;
+			this._p = p;
+			this._ip = ip;
+			this.N = null;
+			this.S = null;
+			this.E = null;
+			this.W = null;
+			this.identity = emptySpriteIdx;
+			this.displayAsset = setAsset;
+			this.closedEdgesBitId = 0;
+			this.openEdgesBitId = 0;
+			
+
+			this.setIdentity = function(idx)
+			{
+				//this places a tile onto the board
+				//current pointer rotation
+				this.identity = idx;
+				this.displayAsset.gotoAndStop(this.identity);
+			}
+
+			this.checkEdgeAvailability = function(dirString)
+			{
+				//returns false if edge (specified by direction) is closed
+				var dirIndex = directionCodes.indexOf(dirString);
+				if (this.closedEdgesBitId & powerBitsByDirection[dirIndex]){
+					return false;
+				}
+				return true;
+			}
+
+			this.checkSameEastSouth = function()
+			{
+				var southSame = false;
+				var eastSame = false;
+
+				if (this.S != null){
+					if (this.S.identity == this.identity){
+						southSame = true;
+					}
+				}
+				if (this.E != null){
+					if (this.E.identity == this.identity){
+						eastSame = true;
+					}
+				}
+				if (southSame == true && eastSame == true){
+					return true;
+				}else{
+					return false;
+				}
+			}
+			
+
+			this.updateOpenEdges = function()
+			{
+
+				this.connectedEdgesBitId = 0x0;
+
+
+				if (this.N != null){
+					if (this.N.identity == emptySpriteIdx){
+						//open
+						this.openEdgesBitId += bitShift_N;
+					}else{
+						//closed
+						this.closedEdgesBitId += bitShift_N;
+					}
+				}
+				if (this.S != null){
+					if (this.S.identity == emptySpriteIdx){
+						//open
+						this.openEdgesBitId += bitShift_S;
+					}else{
+						//closed
+						this.closedEdgesBitId += bitShift_S;
+					}
+				}
+				if (this.E != null){
+					if (this.E.identity == emptySpriteIdx){
+						//open
+						this.openEdgesBitId += bitShift_E;
+					}else{
+						//closed
+						this.closedEdgesBitId += bitShift_E;
+					}
+				}
+				if (this.W != null){
+					if (this.W.identity == emptySpriteIdx){
+						//open
+						this.openEdgesBitId += bitShift_W;
+					}else{
+						//closed
+						this.closedEdgesBitId += bitShift_W;
+					}
+				}
+			}
+
+			this.getDirectionsEmpty = function()
+			{
+				var bitVectorEmpty = 0;
+
+				if (this.N != null){
+					if (this.N.identity == emptySpriteIdx){
+						//open
+						bitVectorEmpty += bitShift_N;
+					}
+				}
+				if (this.S != null){
+					if (this.S.identity == emptySpriteIdx){
+						//open
+						bitVectorEmpty += bitShift_S;
+					}
+				}
+				if (this.E != null){
+					if (this.E.identity == emptySpriteIdx){
+						//open
+						bitVectorEmpty += bitShift_E;
+					}
+				}
+				if (this.W != null){
+					if (this.W.identity == emptySpriteIdx){
+						//open
+						bitVectorEmpty += bitShift_W;
+					}
+				}
+				return bitVectorEmpty;
+			}
+			
+
+			this.validatePointerForPosition = function(pointerObj)
+			{
+				//check if it fits
+				var fitsHere = validateEmptyTilesForPointer(this._i, this._p);
+				if (fitsHere){
+					//empty tiles, can place OK
+					return true;
+				}
+				if (this._i >= (activeCols - 1)){
+					return false;
+				}
+				if (this._p >= (activeRows - 1)){
+					return false;
+				}
+
+				var pointerColors = getPointerImprint(pointerObj);
+				//array is [topLeft, topRight, bottomLeft, bottomRight]
+				if (this.identity != emptySpriteIdx){
+					if (this.identity != pointerColors[0]){
+					//this tile doesnt match color of pointer here (top left)
+						return false;
+					}else{
+						//console.log("top Left matching pointer");
+					}
+				}
+				if(this.S != null){
+					if (this.S.identity != emptySpriteIdx){
+						if (this.S.identity != pointerColors[2]){
+							//this tile doesnt match color of pointer here (lower left)
+							return false;
+						}else{
+							//console.log("bottom Left matching pointer");
+						}
+					}
+				}
+				if (this.E != null){
+					if (this.E.identity != emptySpriteIdx){
+						if (this.E.identity != pointerColors[1]){
+							//this tile doesnt match color of pointer here (top right)
+							return false;
+						}else{
+							//console.log("top right matching pointer");
+						}
+					}
+				}
+				
+
+				var cornerTile = getMetaTileByIP(this._i + 1, this._p + 1);
+				if (cornerTile != null){
+					if (cornerTile.identity != emptySpriteIdx){
+						if (cornerTile.identity != pointerColors[3]){
+							//lower right poisition
+							return false;
+						}else{
+							//console.log("bottom right matching pointer");
+						}
+					}
+				}
+				
+
+
+				return true;
+				
+			}
+		}
+
+		
+
+		function getRandomGOTileIdx()
+		{
+			var p = 1 + Math.floor(Math.random() * colorStatesTotal);
+
+			return p;
+		}
+
+		function getEdgeAfterRotation(dirEdge, rotationDegs)
+		{
+			//input "N", rotationDegs 180, returns "S"
+
+			var edgesOrdered = ["N", "W", "S", "E"];
+			var initialIdx = edgesOrdered.indexOf(dirEdge);
+			//console.log("initial idx = "+initialIdx)
+			var numRotations = Math.floor(rotationDegs / 90);
+			//console.log("numrots = "+numRotations)
+			initialIdx += numRotations;
+			//console.log("initial + rotations = "+initialIdx)
+			var rotated = edgesOrdered[initialIdx % 4];
+			return rotated;
+		}
+		
+
+
+		function setClear(mTile)
+		{
+			//recolorSquare(mTile.displayAsset, gray);
+			mTile.identity = emptySpriteIdx;
+			mTile.displayAsset.gotoAndStop(emptySpriteIdx);
+		}
+
+		function tweenHighlightTile(mTile)
+		{
+			var tween = createjs.Tween.get(mTile.displayAsset).to({alpha:0}, 700, createjs.Ease.bounceOut).call(tweenComplete, [mTile]);
+			tilesInTransition++;
+			displayInTransition = true;
+		}
+
+		function tweenComplete(mTile)
+		{
+			tilesInTransition--;
+			mTile.setIdentity(emptySpriteIdx);
+
+			if (tilesInTransition == 0){
+				//bring alpha back for all tiles
+				var l = spriteList.length;
+				for (var i = 0; i < l; i++) {
+					var sprite = spriteList[i];
+					sprite.alpha = 1;
+				}
+				stage.update();
+				displayInTransition = false;
+			}
+
+
+		}
+
+		function addToSet(element, setArray)
+		{
+			for (var i=0; i < setArray.length; i++){
+				var compareElement = setArray[i];
+				if (compareElement === element){
+					//already added
+					return false;
+				}
+			}
+			//err('queryExistence', setArray);
+			setArray.push(element);
+			return true;
+		}
+
+		function arrayContainsElement(arraySet, element)
+		{
+			for (var i=0; i<arraySet.length; i++){
+				var thisElement = arraySet[i];
+				if (element == thisElement){
+					return true;
+				}
+			}
+			return false;
+		}
+
+		function reverseString(s) 
+		{
+
+  			var o = '';
+
+  			for (var i = s.length - 1; i >= 0; i--){
+    			o += s[i];
+			}
+			return o;
+		}
+
+		function addIfUnique(arraySet, element)
+		{
+			//how is this different from AddToSet?
+			var qidx = arraySet.indexOf(element);
+			if (qidx > -1){
+
+			}else{
+				arraySet.push(element);
+			}
+		}
+
+		
+
+
+	</script>
+</head>
+
+<body onload="init();">
+
+<header id="header" class="EaselJS">
+	<h1><span class="text-product">Place quad tiles. Press any key to rotate. Blocks of 4+ are cleared. <strong></strong></span></h1>
+
+	<p id="score">  </p>
+
+
+	
+</header>
+
+<div class="canvasHolder">
+	<canvas id="testCanvas" width="1000" height="960"></canvas>
+</div>
+</body>
+</html>
